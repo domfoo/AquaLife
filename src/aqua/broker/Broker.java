@@ -2,11 +2,7 @@ package aqua.broker;
 
 import aqua.common.Direction;
 import aqua.common.Properties;
-import aqua.common.msgtypes.DeregisterRequest;
-import aqua.common.msgtypes.RegisterRequest;
-import aqua.common.msgtypes.PoisonPill;
-import aqua.common.msgtypes.HandoffRequest;
-import aqua.common.msgtypes.RegisterResponse;
+import aqua.common.msgtypes.*;
 
 import messaging.Endpoint;
 import messaging.Message;
@@ -55,50 +51,52 @@ public class Broker {
             this.message = message;
         }
 
-        private void register(Message message) {
+        private void register(InetSocketAddress newClient) {
             lock.writeLock().lock();
             String id = CLIENT_BASE_ID + (clientCollection.size() + 1);
-            clientCollection.add(id, message.getSender());
+            clientCollection.add(id, newClient);
             lock.writeLock().unlock();
-
-            endpoint.send(message.getSender(), new RegisterResponse(id));
-        }
-
-        private void deregister(Message message) {
-            lock.writeLock().lock();
-            clientCollection.remove(clientCollection.indexOf(message.getSender()));
-            lock.writeLock().unlock();
-        }
-
-        private void handoffFish(Message message) {
-            HandoffRequest payload = (HandoffRequest) message.getPayload();
-            Direction direction = payload.getFish().getDirection();
 
             lock.readLock().lock();
-            InetSocketAddress neighbor = switch (direction) {
-                case LEFT -> clientCollection.getLeftNeighorOf(clientCollection.indexOf(message.getSender()));
-                case RIGHT -> clientCollection.getRightNeighorOf(clientCollection.indexOf(message.getSender()));
-            };
+            int indexOfNewClient = clientCollection.indexOf(newClient);
+            InetSocketAddress leftNeighbor = clientCollection.getLeftNeighorOf(indexOfNewClient);
+            InetSocketAddress rightNeighbor = clientCollection.getRightNeighorOf(indexOfNewClient);
             lock.readLock().unlock();
 
-            endpoint.send(neighbor, payload);
+            endpoint.send(newClient, new NeighborUpdate(rightNeighbor, Direction.RIGHT));
+            endpoint.send(newClient, new NeighborUpdate(leftNeighbor, Direction.LEFT));
+
+            endpoint.send(leftNeighbor, new NeighborUpdate(newClient, Direction.RIGHT));
+            endpoint.send(rightNeighbor, new NeighborUpdate(newClient, Direction.LEFT));
+
+            endpoint.send(newClient, new RegisterResponse(id));
+        }
+
+        private void deregister(InetSocketAddress client) {
+            lock.writeLock().lock();
+            clientCollection.remove(clientCollection.indexOf(client));
+            lock.writeLock().unlock();
+
+            lock.readLock().lock();
+            int indexOfClient = clientCollection.indexOf(client);
+            InetSocketAddress leftNeighbor = clientCollection.getLeftNeighorOf(indexOfClient);
+            InetSocketAddress rightNeighbor = clientCollection.getRightNeighorOf(indexOfClient);
+            lock.readLock().unlock();
+
+            endpoint.send(client, new NeighborUpdate(client, Direction.LEFT));
+            endpoint.send(client, new NeighborUpdate(client, Direction.LEFT));
+
+            endpoint.send(leftNeighbor, new NeighborUpdate(rightNeighbor, Direction.RIGHT));
+            endpoint.send(rightNeighbor, new NeighborUpdate(leftNeighbor, Direction.LEFT));
         }
 
         @Override
         public void run() {
-            Serializable payload = message.getPayload();
+            if (message.getPayload() instanceof RegisterRequest)
+                register(message.getSender());
 
-            if (payload instanceof RegisterRequest) {
-                register(message);
-            }
-
-            if (payload instanceof DeregisterRequest) {
-                deregister(message);
-            }
-
-            if (payload instanceof HandoffRequest) {
-                handoffFish(message);
-            }
+            if (message.getPayload() instanceof DeregisterRequest)
+                deregister(message.getSender());
         }
     }
 }

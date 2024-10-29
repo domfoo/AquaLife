@@ -2,14 +2,11 @@ package aqua.client;
 
 import java.net.InetSocketAddress;
 
+import aqua.common.msgtypes.*;
 import messaging.Endpoint;
 import messaging.Message;
 import aqua.common.FishModel;
 import aqua.common.Properties;
-import aqua.common.msgtypes.DeregisterRequest;
-import aqua.common.msgtypes.HandoffRequest;
-import aqua.common.msgtypes.RegisterRequest;
-import aqua.common.msgtypes.RegisterResponse;
 
 public class ClientCommunicator {
 	private final Endpoint endpoint;
@@ -33,8 +30,8 @@ public class ClientCommunicator {
 			endpoint.send(broker, new DeregisterRequest(id));
 		}
 
-		public void handOff(FishModel fish) {
-			endpoint.send(broker, new HandoffRequest(fish));
+		public void handOff(FishModel fish, InetSocketAddress neighbor) {
+			endpoint.send(neighbor, new HandoffRequest(fish));
 		}
 	}
 
@@ -50,11 +47,14 @@ public class ClientCommunicator {
 			while (!isInterrupted()) {
 				Message msg = endpoint.blockingReceive();
 
-				if (msg.getPayload() instanceof RegisterResponse)
-					tankModel.onRegistration(((RegisterResponse) msg.getPayload()).getId());
+				if (msg.getPayload() instanceof RegisterResponse registerResponse)
+					tankModel.onRegistration(registerResponse.getId());
 
-				if (msg.getPayload() instanceof HandoffRequest)
-					tankModel.receiveFish(((HandoffRequest) msg.getPayload()).getFish());
+				if (msg.getPayload() instanceof HandoffRequest handoffRequest)
+					tankModel.receiveFish(handoffRequest.getFish());
+
+				if (msg.getPayload() instanceof NeighborUpdate neighborUpdate)
+                    tankModel.updateNeighbor(neighborUpdate.getNeighborAddress(), neighborUpdate.getNeighborSide());
 
 			}
 			System.out.println("Receiver stopped.");
